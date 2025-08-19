@@ -15,7 +15,7 @@ export type VerifyOptions = {
 
 export const verifyComments = async (
 	comments: ReviewComment[],
-	opts: VerifyOptions
+	opts: VerifyOptions,
 ): Promise<VerificationResult> => {
 	const kept: ReviewComment[] = [];
 	const dropped: Array<{ comment: ReviewComment; reasons: string[] }> = [];
@@ -49,7 +49,11 @@ export const verifyComments = async (
 	return { kept, dropped };
 };
 
-const fileAndLineExists = async (repoDir: string, rel: string, line: number) => {
+const fileAndLineExists = async (
+	repoDir: string,
+	rel: string,
+	line: number,
+) => {
 	try {
 		const full = path.join(repoDir, rel);
 		const text = await readFile(full, "utf8");
@@ -63,22 +67,35 @@ const fileAndLineExists = async (repoDir: string, rel: string, line: number) => 
 const hasNonTrivialSuggestion = (c: ReviewComment, minChars: number) => {
 	const s = (c.suggestion ?? "").trim();
 	if (s.length < minChars) return false;
-	const generic = [/consider refactoring/i, /improve readability/i, /add tests?/i];
+	const generic = [
+		/consider refactoring/i,
+		/improve readability/i,
+		/add tests?/i,
+	];
 	return !generic.some((re) => re.test(s));
 };
 
 const referencesKnownSymbols = (
 	c: ReviewComment,
-	defsByFile: Record<string, Array<{ name: string }>>
+	defsByFile: Record<string, Array<{ name: string }>>,
 ) => {
 	const defs = defsByFile[c.file] ?? [];
 	if (defs.length === 0) return true; // do not over-filter when we have no defs
 	const content = `${c.rationale}\n${c.suggestion}`;
-	return defs.some((d) => new RegExp(`(^|[^A-Za-z0-9_])${escapeRegExp(d.name)}([^A-Za-z0-9_]|$)`).test(content));
+	return defs.some((d) =>
+		new RegExp(
+			`(^|[^A-Za-z0-9_])${escapeRegExp(d.name)}([^A-Za-z0-9_]|$)`,
+		).test(content),
+	);
 };
 
 const isDuplicateAgainst = (kept: ReviewComment[], c: ReviewComment) => {
-	return kept.some((k) => k.file === c.file && k.line === c.line && similarity(k.rationale, c.rationale) > 0.9);
+	return kept.some(
+		(k) =>
+			k.file === c.file &&
+			k.line === c.line &&
+			similarity(k.rationale, c.rationale) > 0.9,
+	);
 };
 
 const similarity = (a: string, b: string) => {
@@ -89,6 +106,11 @@ const similarity = (a: string, b: string) => {
 	return intersection.size / Math.max(na.split(" ").length, 1);
 };
 
-const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+const normalize = (s: string) =>
+	s
+		.toLowerCase()
+		.replace(/[^a-z0-9\s]/g, " ")
+		.replace(/\s+/g, " ")
+		.trim();
 
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

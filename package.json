@@ -9,19 +9,22 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/index.ts",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "lint": "biome check ./src --error-on-warnings",
+    "format": "biome format --write ./src",
+    "format:check": "biome format --write=false ./src"
   },
   "dependencies": {
-    "@oxc-parser/wasm": "^0.28.0",
+    "oxc-parser": "^0.82.2",
+    "oxc-walker": "^0.4.0",
     "commander": "^12.1.0",
-    "lodash": "^4.17.21",
     "simple-git": "^3.27.0",
     "typescript": "^5.4.5",
     "undici": "^6.19.8",
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@types/lodash": "^4.14.202",
+    "@biomejs/biome": "^1.9.3",
     "@types/node": "^20.11.30",
     "tsx": "^4.19.0"
   },

@@ -8,8 +8,20 @@ export const renderMarkdown = (
 	comments: ReviewComment[],
 	ctx: {
 		diffSummary: { added: number; deleted: number; filesChanged: number };
-		codeGraph?: any;
-		ragContext?: any;
+		codeGraph?: {
+			summary: { hotspots: Array<{ file: string; degree: number }> };
+			relevantDefinitions: Record<
+				string,
+				Array<{
+					name: string;
+					kind: string;
+					exported: boolean;
+					text: string;
+					pos: { line: number; character: number };
+				}>
+			>;
+		};
+		ragContext?: unknown;
 	},
 ): string => {
 	const header = `# AI Code Review\n\n- **files changed**: ${ctx.diffSummary.filesChanged}\n- **lines added**: ${ctx.diffSummary.added}\n- **lines deleted**: ${ctx.diffSummary.deleted}`;
@@ -22,15 +34,14 @@ export const renderMarkdown = (
 	const body =
 		comments.length === 0
 			? "\n\n_No issues detected._"
-			: "\n\n## Review Comments\n\n" +
-				comments
+			: `\n\n## Review Comments\n\n${comments
 					.map(
 						(c) => `- **${c.severity.toUpperCase()}** in \
 
 													\`${c.file}:${c.line}\` — ${escapeMd(c.smell)}\n\n  - rationale: ${escapeMd(c.rationale)}\n  - suggestion: ${escapeMd(c.suggestion)}`,
 					)
-					.join("\n\n");
-	return header + cg + rag + body + "\n";
+					.join("\n\n")}`;
+	return `${header}${cg}${rag}${body}\n`;
 };
 
 const escapeMd = (s: string) => s.replace(/[|*_`]/g, (m) => `\\${m}`);

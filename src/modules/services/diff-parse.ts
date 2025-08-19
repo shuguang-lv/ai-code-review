@@ -34,7 +34,12 @@ export const analyzeUnifiedDiff = (diffText: string): ParsedDiff => {
 			const m = line.match(/\+([0-9]+)(?:,([0-9]+))?/);
 			targetLineStart = m ? Number.parseInt(m[1], 10) : 1;
 			targetLine = targetLineStart;
-			currentHunks.push({ filePath: currentPath || "unknown", targetStart: targetLineStart, targetEnd: targetLineStart, addedLines: [] });
+			currentHunks.push({
+				filePath: currentPath || "unknown",
+				targetStart: targetLineStart,
+				targetEnd: targetLineStart,
+				addedLines: [],
+			});
 			continue;
 		}
 		if (line.startsWith("+") && !line.startsWith("+++")) {
@@ -72,6 +77,6 @@ export const analyzeUnifiedDiff = (diffText: string): ParsedDiff => {
 
 	return {
 		files,
-		summary: { added, deleted, filesChanged: files.length }
+		summary: { added, deleted, filesChanged: files.length },
 	};
 };
