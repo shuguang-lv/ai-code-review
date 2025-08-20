@@ -17,7 +17,7 @@ import {
 import { cloneAndPrepare, getCommitMessages, getUnifiedDiff } from '../services/git.js';
 import { LlmClient } from '../services/llm.js';
 import { RagClient } from '../services/rag.js';
-import { ReviewCommentSchema } from '../types.js';
+import { type ParsedDiff, ReviewCommentSchema } from '../types.js';
 import { verifyComments } from '../verification/scripts.js';
 import { chunkParsedDiff, summarizeChunkForPrompt } from './chunker.js';
 
