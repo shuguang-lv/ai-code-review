@@ -11,6 +11,7 @@ export const ReviewCommentSchema = z.object({
 
 export type ReviewComment = z.infer<typeof ReviewCommentSchema>;
 
+// Legacy types for backward compatibility
 export type ParsedHunk = {
   filePath: string;
   targetStart: number;
@@ -25,4 +26,68 @@ export type ParsedDiff = {
     hunks: ParsedHunk[];
   }>;
   summary: { added: number; deleted: number; filesChanged: number };
+};
+
+// Enhanced types that align with parse-diff output
+export type DiffChangeType = 'normal' | 'add' | 'del';
+
+export type DiffChange =
+  | {
+      type: 'normal';
+      ln1: number;
+      ln2: number;
+      normal: true;
+      content: string;
+    }
+  | {
+      type: 'add';
+      add: true;
+      ln: number;
+      content: string;
+    }
+  | {
+      type: 'del';
+      del: true;
+      ln: number;
+      content: string;
+    };
+
+export type DiffChunk = {
+  content: string;
+  changes: DiffChange[];
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+};
+
+export type DiffFile = {
+  chunks: DiffChunk[];
+  deletions: number;
+  additions: number;
+  from?: string;
+  to?: string;
+  oldMode?: string;
+  newMode?: string;
+  index?: string[];
+  deleted?: boolean;
+  new?: boolean;
+};
+
+export type EnhancedParsedDiff = {
+  files: Array<{
+    path: string;
+    status: 'A' | 'M' | 'D' | 'R';
+    rawFile: DiffFile;
+    chunks: DiffChunk[];
+    additions: number;
+    deletions: number;
+  }>;
+  summary: {
+    added: number;
+    deleted: number;
+    filesChanged: number;
+    totalAdditions: number;
+    totalDeletions: number;
+  };
 };

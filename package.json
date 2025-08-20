@@ -18,8 +18,11 @@
   },
   "dependencies": {
     "commander": "^12.1.0",
+    "fuzzball": "^2.2.3",
     "oxc-parser": "^0.82.2",
     "oxc-walker": "^0.4.0",
+    "p-queue": "^8.1.0",
+    "parse-diff": "^0.11.1",
     "simple-git": "^3.27.0",
     "typescript": "^5.4.5",
     "undici": "^6.19.8",

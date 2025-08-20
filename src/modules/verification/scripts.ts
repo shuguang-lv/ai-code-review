@@ -1,16 +1,30 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { ReviewComment } from '../types.js';
+import { FuzzyCodeMatcher } from './fuzzy-matcher.js';
 
 export type VerificationResult = {
   kept: ReviewComment[];
   dropped: Array<{ comment: ReviewComment; reasons: string[] }>;
+  enhanced: Array<ReviewComment & { confidence?: number }>;
+  misplaced: Array<{
+    comment: ReviewComment;
+    originalLocation: { file: string; line: number };
+    suggestedLocation: { file: string; line: number; confidence: number };
+    contextEvidence: string[];
+  }>;
 };
 
 export type VerifyOptions = {
   repoDir: string;
-  definitionsByFile?: Record<string, Array<{ name: string }>>;
+  definitionsByFile?: Record<string, Array<{ name: string; line: number; content?: string }>>;
   minSuggestionChars?: number;
+  enableFuzzyMatching?: boolean;
+  fuzzyMatchOptions?: {
+    minConfidence: number;
+    maxContextMatches: number;
+    includeContext: boolean;
+  };
 };
 
 export const verifyComments = async (
@@ -19,6 +33,31 @@ export const verifyComments = async (
 ): Promise<VerificationResult> => {
   const kept: ReviewComment[] = [];
   const dropped: Array<{ comment: ReviewComment; reasons: string[] }> = [];
+  const enhanced: Array<ReviewComment & { confidence?: number }> = [];
+  const misplaced: Array<{
+    comment: ReviewComment;
+    originalLocation: { file: string; line: number };
+    suggestedLocation: { file: string; line: number; confidence: number };
+    contextEvidence: string[];
+  }> = [];
+
+  // Initialize fuzzy matcher if enabled
+  let fuzzyMatcher: FuzzyCodeMatcher | undefined;
+  if (opts.enableFuzzyMatching) {
+    fuzzyMatcher = new FuzzyCodeMatcher(opts.fuzzyMatchOptions);
+
+    // Get all unique files from comments
+    const files = [...new Set(comments.map((c) => c.file))];
+
+    // Load file contents for fuzzy matching
+    await fuzzyMatcher.loadFiles(opts.repoDir, files, opts.definitionsByFile);
+
+    // Find misplaced comments
+    misplaced.push(...fuzzyMatcher.findMisplacedComments(comments));
+
+    // Enhance comment locations
+    enhanced.push(...fuzzyMatcher.enhanceCommentLocations(comments));
+  }
 
   for (const c of comments) {
     const reasons: string[] = [];
@@ -39,6 +78,20 @@ export const verifyComments = async (
       reasons.push('duplicate-comment');
     }
 
+    // Use fuzzy matching to improve duplicate detection
+    if (fuzzyMatcher && reasons.length === 0) {
+      const fuzzyMatch = fuzzyMatcher.findCommentLocation(c);
+      if (fuzzyMatch.confidence > 0.9) {
+        // Check if this comment is too similar to existing ones using fuzzy matching
+        const isFuzzyDuplicate = kept.some(
+          (k) => fuzzyMatcher.getSimilarity(k.rationale, c.rationale) > 0.85
+        );
+        if (isFuzzyDuplicate) {
+          reasons.push('fuzzy-duplicate-comment');
+        }
+      }
+    }
+
     if (reasons.length === 0) {
       kept.push(c);
     } else {
@@ -46,7 +99,7 @@ export const verifyComments = async (
     }
   }
 
-  return { kept, dropped };
+  return { kept, dropped, enhanced, misplaced };
 };
 
 const fileAndLineExists = async (repoDir: string, rel: string, line: number) => {

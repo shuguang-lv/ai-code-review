@@ -9,7 +9,11 @@ import {
 } from '../analysis/code-graph.js';
 import { analyzeCodeSmells } from '../analysis/linters.js';
 import { renderJson, renderMarkdown } from '../renderers/output.js';
-import { analyzeUnifiedDiff } from '../services/diff-parse.js';
+import {
+  analyzeDiffComplexity,
+  analyzeUnifiedDiff,
+  analyzeUnifiedDiffEnhanced,
+} from '../services/diff-parse.js';
 import { cloneAndPrepare, getCommitMessages, getUnifiedDiff } from '../services/git.js';
 import { LlmClient } from '../services/llm.js';
 import { RagClient } from '../services/rag.js';
@@ -87,17 +91,29 @@ export const reviewRepositoryDiff = async (args: {
   sourceRef: string;
   targetRef: string;
   workdir?: string;
-  rawRagConfig?: { baseUrl: string; apiKey?: string };
+  rawRagConfig?: {
+    baseUrl: string;
+    apiKey?: string;
+    concurrency?: number;
+    intervalCap?: number;
+    interval?: number;
+    timeout?: number;
+  };
   rawLlmConfig?: {
     baseUrl: string;
     apiKey: string;
     model: string;
     maxTokens: number;
     temperature: number;
+    concurrency?: number;
+    intervalCap?: number;
+    interval?: number;
+    timeout?: number;
   };
   format: 'json' | 'md' | 'both';
   outputPath?: string;
   stream?: boolean;
+  useEnhancedParsing?: boolean;
 }): Promise<ReviewOutcome> => {
   try {
     const workingDirectory = args.workdir ?? path.join(os.tmpdir(), `ai-code-review-${Date.now()}`);
@@ -106,7 +122,56 @@ export const reviewRepositoryDiff = async (args: {
       workdir: workingDirectory,
     });
     const unifiedDiff = await getUnifiedDiff(git, args.sourceRef, args.targetRef);
-    const parsed = analyzeUnifiedDiff(unifiedDiff);
+
+    // Use enhanced parsing if requested, otherwise use legacy parsing
+    let parsed: ParsedDiff;
+    let diffComplexity: ReturnType<typeof analyzeDiffComplexity> | undefined;
+
+    if (args.useEnhancedParsing) {
+      const enhancedParsed = analyzeUnifiedDiffEnhanced(unifiedDiff);
+      diffComplexity = analyzeDiffComplexity(enhancedParsed);
+
+      // Convert enhanced format to legacy format for backward compatibility
+      parsed = {
+        files: enhancedParsed.files.map((file) => ({
+          path: file.path,
+          status: file.status,
+          hunks: file.chunks.map((chunk) => ({
+            filePath: file.path,
+            targetStart: chunk.newStart,
+            targetEnd: chunk.newStart + chunk.newLines - 1,
+            addedLines: chunk.changes
+              .filter((change) => change.type === 'add')
+              .map((change) => ({
+                lineNumber: change.ln,
+                content: change.content,
+              })),
+          })),
+        })),
+        summary: {
+          added: enhancedParsed.summary.added,
+          deleted: enhancedParsed.summary.deleted,
+          filesChanged: enhancedParsed.summary.filesChanged,
+        },
+      };
+
+      console.log('📊 Diff Complexity Analysis:');
+      console.log(`  Complexity: ${diffComplexity.complexity}`);
+      console.log(`  Files changed: ${diffComplexity.metrics.filesChanged}`);
+      console.log(`  Total lines: ${diffComplexity.metrics.totalLines}`);
+      console.log(
+        `  Largest file: ${diffComplexity.metrics.largestFile?.path} (${diffComplexity.metrics.largestFile?.changes} changes)`
+      );
+      for (const insight of diffComplexity.insights) {
+        console.log(`  💡 ${insight}`);
+      }
+      for (const rec of diffComplexity.recommendations) {
+        console.log(`  📋 ${rec}`);
+      }
+    } else {
+      parsed = analyzeUnifiedDiff(unifiedDiff);
+    }
+
     const smells = analyzeCodeSmells(parsed);
 
     const {
@@ -128,6 +193,8 @@ export const reviewRepositoryDiff = async (args: {
             ...new Set(parsed.files.map((f) => path.extname(f.path))),
           ].join(', ')}`,
           tags: ['code-review', 'best-practices', 'smells'],
+          priority: 1, // High priority for initial RAG query
+          id: 'initial-rag-query',
         })
       : undefined;
     const ragContext = slimRagContext(ragContextRaw);
@@ -252,16 +319,39 @@ export const reviewRepositoryDiff = async (args: {
       if (refinedParsed.length > 0) refined = refinedParsed;
     }
 
-    const defsByFile: Record<string, Array<{ name: string }>> = {};
+    const defsByFile: Record<string, Array<{ name: string; line: number; content?: string }>> = {};
     for (const [file, defs] of Object.entries(definitions)) {
-      defsByFile[file] = defs.map((d) => ({ name: d.name }));
+      defsByFile[file] = defs.map((d) => ({
+        name: d.name,
+        line: d.pos.line,
+        content: d.text,
+      }));
     }
     const verification = await verifyComments(refined, {
       repoDir: workingDirectory,
       definitionsByFile: defsByFile,
       minSuggestionChars: 16,
+      enableFuzzyMatching: true,
+      fuzzyMatchOptions: {
+        minConfidence: 0.7,
+        maxContextMatches: 5,
+        includeContext: true,
+      },
     });
-    const finalComments = verification.kept;
+
+    // Use enhanced comments if available, otherwise fall back to kept comments
+    const finalComments =
+      verification.enhanced.length > 0 ? verification.enhanced : verification.kept;
+
+    // Log misplaced comments for debugging
+    if (verification.misplaced.length > 0) {
+      console.warn(`Found ${verification.misplaced.length} potentially misplaced comments:`);
+      verification.misplaced.forEach((m) => {
+        console.warn(
+          `  Comment on ${m.originalLocation.file}:${m.originalLocation.line} might belong at ${m.suggestedLocation.file}:${m.suggestedLocation.line} (confidence: ${(m.suggestedLocation.confidence * 100).toFixed(1)}%)`
+        );
+      });
+    }
 
     const outputs = {
       json: renderJson(finalComments),
@@ -271,6 +361,19 @@ export const reviewRepositoryDiff = async (args: {
         ragContext,
       }),
     };
+
+    // Wait for all queued operations to complete
+    if (llm) {
+      console.log('Waiting for LLM queue to complete...');
+      await llm.waitForIdle();
+      console.log('LLM queue completed. Final stats:', llm.getQueueStats());
+    }
+
+    if (rag) {
+      console.log('Waiting for RAG queue to complete...');
+      await rag.waitForIdle();
+      console.log('RAG queue completed. Final stats:', rag.getQueueStats());
+    }
 
     let output = outputs.md;
     if (args.format === 'json') output = outputs.json;
